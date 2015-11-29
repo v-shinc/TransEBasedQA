@@ -74,7 +74,6 @@ private:
 	string train_path, out_dir;
 	mat Ww, Ws;
 	double alpha, gamma;
-
 	//unordered_map<string, unsigned> index_of_word;
 	unordered_map<string, unsigned> index_of_kb;
 	unordered_map <string, unordered_map<string, vector<string>>> graph;
@@ -85,7 +84,7 @@ private:
 	void train_one(Blob &blob, double & loss);
 	double gradientDescent(const vector <unsigned>&ques_indices, const vector<unsigned> &answer_indices, const vector<unsigned> &wrong_answer_indices, double weight);
 	void randomNegativeData(const string &topic, const string& correct_rel, vector<unsigned> &indices);
-	void subgraphPresentation(string &o, vector<unsigned> &indices);
+	void subgraphPresentation(const string &o, vector<unsigned> &indices);
 	static const unsigned MAX_TABLE_SIZE = 2000;
 	double l_table[MAX_TABLE_SIZE];
 	static uniform_real_distribution<double> distribution;
@@ -93,6 +92,7 @@ private:
 	
 };
 uniform_real_distribution<double> QAEmbedding::distribution(0.0, 1.0);
+
 default_random_engine QAEmbedding::generator;
 QAEmbedding::QAEmbedding(int dimension, const string &trainDataPath,
 	const string &resultDirectory, const string& wordListPath, const string&kbListPath, const string&fbPath, AnswerMode _mode = AnswerMode::SUBGRAPH)
@@ -113,6 +113,8 @@ QAEmbedding::QAEmbedding(int dimension, const string &trainDataPath,
 		index_of_kb[sline] = kb_no++;
 	}
 	kb_fin.close();
+
+
 	cout << "size of index_of_kb " << kb_no << " " << index_of_kb.size() << endl;
 
 	fstream fb_fin(fbPath);
@@ -251,12 +253,12 @@ double QAEmbedding::gradientDescent(const vector <unsigned>&ques_indices, const 
 		}
 		return loss;
 }
-void QAEmbedding::subgraphPresentation(string &root, vector<unsigned> &indices){
+void QAEmbedding::subgraphPresentation(const string &root, vector<unsigned> &indices){
 	
 	auto start_index = index_of_kb.size();
 	double prob = min(1., 100.0 / graph[root].size());
 	set<unsigned> subgraph_set;
-	if (graph.count(root) == 0) cout << "can't find " << root << " in graph" << endl;
+	if (graph.count(root) == 0) { cout << "can't find " << root << " in graph" << endl; return; }
 	for (auto & item : graph[root]){
 		if (distribution(generator) <= prob){
 			if (index_of_kb.count(item.first) == 0) cout << "11" << item.first << endl;
@@ -290,7 +292,7 @@ void QAEmbedding::randomNegativeData(const string &topic, const string & correct
 		auto n_r1 = entity_to_relation_vec[topic].size();
 		auto r1 = entity_to_relation_vec[topic][rand() % n_r1];
 		
-		if (r1 != correct_rel || n_r1 != 1) {
+		if (!(r1 == correct_rel && n_r1 == 1)) {
 			while (r1 == correct_rel){
 				r1 = entity_to_relation_vec[topic][rand() % n_r1];
 			}
@@ -298,15 +300,28 @@ void QAEmbedding::randomNegativeData(const string &topic, const string & correct
 			auto &o = objs[rand() % objs.size()];
 			
 			indices.push_back(index_of_kb[topic]);
-			
 			indices.push_back(index_of_kb[r1]);
-			
 			indices.push_back(index_of_kb[o]);
 			subgraphPresentation(o, indices);
 			return;
 		}
 		else{
+			// If there is no 1-hop neither 2-hop negative data, random choose one from global graph
+			if (n_direct_neighbor[topic] == n_neighbor_within_2[topic]){
+				static uniform_int_distribution<unsigned> rand_entity_distribution(0, graph.size());
+				auto it = graph.begin();
+				std::advance(it, rand_entity_distribution(generator));
+				const string & subject = it->first;
+				r1 = entity_to_relation_vec[subject][rand() % entity_to_relation_vec[subject].size()];
+				const string & object = graph[subject][r1][rand() % graph[subject][r1].size()];
+				indices.push_back(index_of_kb[subject]);
+				indices.push_back(index_of_kb[r1]);
+				indices.push_back(index_of_kb[object]);
+				subgraphPresentation(object, indices);
+				return;
+			}
 			is_two_hop = true;
+			
 		}
 		
 	}
@@ -318,13 +333,11 @@ void QAEmbedding::randomNegativeData(const string &topic, const string & correct
 		auto m = graph[topic][r1][rand() % graph[topic][r1].size()];
 		
 		auto n_r2 = entity_to_relation_vec[m].size();
-		// This is extreme case, the only 2-hop relation is correct path, any entity direct link to topic can be wrong answer
+		// This is extreme case, the only 2-hop relation is correct path. In this case, any entity direct link to topic can be wrong answer
 		if (n_r1 == 1 && graph[topic][r1].size() == 1 && n_r2 == 1 && correct_rel == r1 + " " + graph[m][entity_to_relation_vec[m][0]][0]){
-			
+			// Fallback to 1-hop path
 			indices.push_back(index_of_kb[topic]);
-			
 			indices.push_back(index_of_kb[r1]);
-			
 			indices.push_back(index_of_kb[m]);
 			subgraphPresentation(m, indices);
 			return;
