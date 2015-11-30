@@ -4,12 +4,11 @@
 #include <fstream>
 #include <unordered_map>
 #include <boost/algorithm/string.hpp>
-#include <set>
+#include <unordered_set>
 #include <thread>
 #include <random>
 #include <numeric>
 #include <cmath>
-#include <unordered_set>
 
 using namespace arma;
 using namespace std;
@@ -133,46 +132,42 @@ QAEmbedding::QAEmbedding(int dimension, const string &trainDataPath,
 }
 //ques_indices: indicate the index of each word appearing in the question in sequence
 double QAEmbedding::gradientDescent(const vector <unsigned>&ques_indices, const vector<unsigned> &answer_indices, const vector<unsigned> &wrong_answer_indices){
-
-	vec wq = zeros<vec>(dim);
-	vec wp = zeros<vec>(dim);
-	vec wn = zeros<vec>(dim);
-
-	for (auto i : ques_indices){ 
-		if (i >= Ww.n_cols)cout << i << "xxxx" << Ww.n_cols << endl;
-		if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
-		wq += Ww.col(i);
-	} 
-	
+	vec f = zeros<vec>(dim);
+	vec g1 = zeros<vec>(dim);
+	vec g2 = zeros<vec>(dim);
+	for (auto i : ques_indices){
+		f += Ww.col(i);
+	}
 	for (auto i : answer_indices){
-		if (i >= Ws.n_cols)cout << i << "yyyy" << Ws.n_cols << endl;
-		if (norm(Ws.col(i)) > 1) Ws.col(i) = normalise(Ws.col(i));
-		wp += Ws.col(i);
+		g1 += Ws.col(i);
 	}
-	
 	for (auto i : wrong_answer_indices) {
-		if (i >= Ws.n_cols)cout << i << "zzzz" << Ws.n_cols << endl;
-		if (norm(Ws.col(i)) > 1) Ws.col(i) = normalise(Ws.col(i));
-		wn += Ws.col(i);
+		//if (i >= Ws.n_cols)cout << i << " "<< Ws.n_cols<< endl;
+		g2 += Ws.col(i);
 	}
-	
-	double loss = gamma - dot(wq, wp) + dot(wq, wn);
+	double f_l1 = norm(f);
+	double g1_l1 = norm(g1);
+	double g2_l1 = norm(g2);
+	double norm_dot_f_g1 = norm_dot(f, g1);
+	double norm_dot_f_g2 = norm_dot(f, g2);
+	double loss = gamma - norm_dot_f_g1 + norm_dot_f_g2;
 	if (loss < 0) return 0;
 	for (auto i : answer_indices){
 
-		Ws.col(i) += alpha * wq;
+		Ws.col(i) += alpha * (f / (f_l1 * g1_l1) - norm_dot_f_g1 / (g1_l1 * g1_l1) * g1);
 	}
 	for (auto i : ques_indices){
 
-		Ww.col(i) += alpha * wp;
+		//Ww.col(i) += alpha * wp;
+		Ww.col(i) += alpha * (g1 / (f_l1 * g1_l1) - norm_dot_f_g1 / (f_l1 * f_l1) * f);
 	}
 	for (auto i : wrong_answer_indices){
 
-		Ws.col(i) -= alpha * wq;
+		Ws.col(i) -= alpha * (f / (f_l1 * g2_l1) - norm_dot_f_g2 / (g2_l1 * g2_l1) * g2);
 	}
 	for (auto i : ques_indices){
 
-		Ww.col(i) -= alpha * wn;
+		Ww.col(i) -= alpha * (g2 / (f_l1 * g2_l1) - norm_dot_f_g2 / (f_l1 * f_l1) * f);
 	}
 	return loss;
 }
@@ -198,9 +193,9 @@ void QAEmbedding::subgraphPresentation(unsigned root, vector<unsigned> &indices)
 }
 void QAEmbedding::train_one(Blob &blob, double &loss){
 	auto q_entity = blob.topicEntity();
-	int n_hop = 32;
+	int n_hop = 30;
 	auto correct_relation = blob.relation();
-	if (graph.count(q_entity) == 0) cout << 111 << " " << q_entity << endl;
+	if (graph.count(q_entity) == 0){ cout << 111 << " " << q_entity << endl;  return; }
 	for (auto &item : graph[q_entity]){
 		
 		// 1-hop negative data
@@ -307,6 +302,7 @@ void QAEmbedding::train(int n_epoch, double _alpha, double _gamma){
 		for (int k = 0; k < n_block; ++k){
 			auto it = block_start;
 			size_t step = floor(n_block * distribution(generator));
+			if (step >= n_block) cout << " step " << step << " " << n_block << endl;
 			std::advance(it, step);
 			train_one(*it, loss_s[n_workers - 1]);
 		}
