@@ -40,7 +40,7 @@ struct AnswerInfo{
 	string topic_entity;
 	int n_hop;
 };
-void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>& question_indices, map_type &index_of_kb, mat & Ws, mat &Ww, vector<pair<double, AnswerInfo>> &answers){
+void beam_search_c2(graph_type& graph, const string &q_entity, vec &f_q, map_type &index_of_kb, mat & Ws, vector<pair<double, AnswerInfo>> &answers){
 
 	priority_queue<triple_type, vector<triple_type>, Cmp>  pq;
 	static uniform_real_distribution<double> distribution(0.0, 1.0);
@@ -48,11 +48,7 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 	if (index_of_kb.count(q_entity) == 0){
 		cout << "key error: can't find " << q_entity << "in index_of_kb" << endl;
 	}
-	vec f_q = zeros<vec>(Ww.n_rows);
-	for (auto i : question_indices){
-		if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
-		f_q += Ww.col(i);
-	}
+
 	for (auto &item1 : graph[q_entity]){
 		
 		auto rel1 = item1.first;
@@ -107,19 +103,16 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 	}
 	//sort(answers.begin(), answers.end(), [](const pair<double, string> &lhs, const pair<double, string>&rhs){return lhs.first > rhs.first; });
 }
-void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& question_indices, map_type &index_of_kb, mat & Ws, mat &Ww, vector<pair<double, AnswerInfo>> &answers){
+void strategy_c1(graph_type& graph, const string &q_entity, vec &f_q, map_type &index_of_kb, mat & Ws, vector<pair<double, AnswerInfo>> &answers){
 
 	if (index_of_kb.count(q_entity) == 0){
 		cout << "key error: can't find " << q_entity << "in index_of_kb" << endl;
 		return;
 	}
 	
-	vec f_q = zeros<vec>(Ww.n_rows);
-	for (auto i : question_indices){
-		if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
-		f_q += Ww.col(i);
-	}
-	
+	static uniform_real_distribution<double> distribution(0.0, 1.0);
+	static default_random_engine generator;
+
 	unsigned start_index = index_of_kb.size();
 	for (auto &item1 : graph[q_entity]){
 		for (auto &candidate : item1.second){
@@ -128,8 +121,6 @@ void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& qu
 			answer_vec.push_back(index_of_kb[item1.first]);  // add relation in path
 			answer_vec.push_back(index_of_kb[candidate]);
 
-			static uniform_real_distribution<double> distribution(0.0, 1.0);
-			static default_random_engine generator;
 			double prob = min(1.0, 100.0 / graph[candidate].size());
 			unordered_set<unsigned> subgraph_set;
 			// add subgraph
@@ -156,30 +147,34 @@ struct Blob{
 	string original_size_of_gold;		// number of standard answers. Those answers which fail to be aligned is included
 	string predicated;
 };
-void inference_on(Blob &blob, 
+void inference_one(Blob &blob, 
 	unordered_map<string, unsigned> &index_of_word,
 	unordered_map<string, unsigned> &index_of_kb,
-	unordered_map <string, unordered_map<string, vector<string>>> graph,
+	unordered_map <string, unordered_map<string, vector<string>>> &graph,
 	mat &Ws, mat &Ww){
 	
 	// Transform each word in question to corresponding index
 	vector<string> words;
-	vector<unsigned> question_indices;
+
 	boost::split(words, blob.question, boost::is_any_of(" "));
+	vec f_q = zeros<vec>(Ww.n_rows);
 	for (auto &w : words)
 	{
 		if (index_of_word.count(w) > 0){
-			question_indices.push_back(index_of_word[w]);
+			auto i = index_of_word[w];
+			if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
+			f_q += Ww.col(i);
 		}
 		else{
 			cout << "cannot find " << w << " in index_of_word\n";
 		}
 	}
+	
 	vector<pair<double, AnswerInfo>>  answers;
 	// Go over all candidate question topic entities
 	for (auto &topic_e : blob.topic_entities){
-		strategy_c1(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
-		//beam_search_c2(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
+		strategy_c1(graph, topic_e, f_q, index_of_kb, Ws, answers);
+		//beam_search_c2(graph, topic_e, f_q, index_of_kb, Ws, answers);
 	}
 
 	sort(answers.begin(), answers.end(), [](const pair<double, AnswerInfo> &lhs, const pair<double, AnswerInfo>&rhs){return lhs.first > rhs.first; });
@@ -297,14 +292,14 @@ void inference(const string&fb_path, const string& word_list_path, const string&
 		threads[i] = thread([&index_of_kb, &index_of_word, &graph, &Ws, &Ww, block_start, block_end, i](){
 			
 			for (auto it = block_start; it != block_end; ++it){
-				inference_on(*it, index_of_word, index_of_kb, graph, Ws, Ww);
+				inference_one(*it, index_of_word, index_of_kb, graph, Ws, Ww);
 			}
 		});
 
 		block_start = block_end;
 	}
 	for (auto it = block_start; it != test_data.end(); ++it){
-		inference_on(*it, index_of_word, index_of_kb, graph, Ws, Ww);
+		inference_one(*it, index_of_word, index_of_kb, graph, Ws, Ww);
 	}
 	for_each(threads.begin(), threads.end(), std::mem_fn(&std::thread::join));
 	for_each(test_data.begin(), test_data.end(), [&fout](Blob &b){fprintf(fout, "%s\n", b.predicated.c_str()); });

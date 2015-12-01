@@ -53,10 +53,10 @@ Blob::Blob(const string& data){
 	answer_ = stoi(fields[ANSWER]);
 	auto found = fields[RELATION].find(" ");
 	if (found != string::npos){
-		relation_pair = make_pair(stoi(fields[RELATION].substr(0, found)), stoi(fields[RELATION].substr(found + 1)));
+		relation_pair = std::move(make_pair(stoi(fields[RELATION].substr(0, found)), stoi(fields[RELATION].substr(found + 1))));
 	}
 	else{
-		relation_pair = make_pair(stoi(fields[RELATION]), -1);
+		relation_pair = std::move(make_pair(stoi(fields[RELATION]), -1));
 	}
 
 	//if (relationStr == "") cout << "hhh" <<data << endl;
@@ -145,29 +145,29 @@ double QAEmbedding::gradientDescent(const vector <unsigned>&ques_indices, const 
 		//if (i >= Ws.n_cols)cout << i << " "<< Ws.n_cols<< endl;
 		g2 += Ws.col(i);
 	}
-	double f_l1 = norm(f);
-	double g1_l1 = norm(g1);
-	double g2_l1 = norm(g2);
+	double f_l = norm(f);
+	double g1_l = norm(g1);
+	double g2_l = norm(g2);
 	double norm_dot_f_g1 = norm_dot(f, g1);
 	double norm_dot_f_g2 = norm_dot(f, g2);
 	double loss = gamma - norm_dot_f_g1 + norm_dot_f_g2;
 	if (loss < 0) return 0;
 	for (auto i : answer_indices){
 
-		Ws.col(i) += alpha * (f / (f_l1 * g1_l1) - norm_dot_f_g1 / (g1_l1 * g1_l1) * g1);
+		Ws.col(i) += alpha * (f / (f_l * g1_l) - norm_dot_f_g1 / (g1_l * g1_l) * g1);
 	}
 	for (auto i : ques_indices){
 
 		//Ww.col(i) += alpha * wp;
-		Ww.col(i) += alpha * (g1 / (f_l1 * g1_l1) - norm_dot_f_g1 / (f_l1 * f_l1) * f);
+		Ww.col(i) += alpha * (g1 / (f_l * g1_l) - norm_dot_f_g1 / (f_l * f_l) * f);
 	}
 	for (auto i : wrong_answer_indices){
 
-		Ws.col(i) -= alpha * (f / (f_l1 * g2_l1) - norm_dot_f_g2 / (g2_l1 * g2_l1) * g2);
+		Ws.col(i) -= alpha * (f / (f_l * g2_l) - norm_dot_f_g2 / (g2_l * g2_l) * g2);
 	}
 	for (auto i : ques_indices){
 
-		Ww.col(i) -= alpha * (g2 / (f_l1 * g2_l1) - norm_dot_f_g2 / (f_l1 * f_l1) * f);
+		Ww.col(i) -= alpha * (g2 / (f_l * g2_l) - norm_dot_f_g2 / (f_l * f_l) * f);
 	}
 	return loss;
 }
@@ -193,7 +193,7 @@ void QAEmbedding::subgraphPresentation(unsigned root, vector<unsigned> &indices)
 }
 void QAEmbedding::train_one(Blob &blob, double &loss){
 	auto q_entity = blob.topicEntity();
-	int n_hop = 30;
+	
 	auto correct_relation = blob.relation();
 	if (graph.count(q_entity) == 0){ cout << 111 << " " << q_entity << endl;  return; }
 	for (auto &item : graph[q_entity]){
