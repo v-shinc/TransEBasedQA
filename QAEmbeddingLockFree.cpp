@@ -139,19 +139,19 @@ double QAEmbedding::gradientDescent(const vector <unsigned>&ques_indices, const 
 	vec wn = zeros<vec>(dim);
 
 	for (auto i : ques_indices){ 
-		if (i >= Ww.n_cols)cout << i << "xxxx" << Ww.n_cols << endl;
+		//if (i >= Ww.n_cols)cout << i << "xxxx" << Ww.n_cols << endl;
 		if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
 		wq += Ww.col(i);
 	} 
 	
 	for (auto i : answer_indices){
-		if (i >= Ws.n_cols)cout << i << "yyyy" << Ws.n_cols << endl;
+		//if (i >= Ws.n_cols)cout << i << "yyyy" << Ws.n_cols << endl;
 		if (norm(Ws.col(i)) > 1) Ws.col(i) = normalise(Ws.col(i));
 		wp += Ws.col(i);
 	}
 	
 	for (auto i : wrong_answer_indices) {
-		if (i >= Ws.n_cols)cout << i << "zzzz" << Ws.n_cols << endl;
+		//if (i >= Ws.n_cols)cout << i << "zzzz" << Ws.n_cols << endl;
 		if (norm(Ws.col(i)) > 1) Ws.col(i) = normalise(Ws.col(i));
 		wn += Ws.col(i);
 	}

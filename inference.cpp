@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <thread>
 #include <unordered_set>
-#include <mutex>
 #include <atomic>
 #include <unordered_set>
 
@@ -26,6 +25,7 @@ using triple_type = tuple < double, string, string>;
 double scoreFunc(vec &f_q, vector<unsigned> &a_indices, mat &Ws){
 	vec g_a = zeros<vec>(f_q.n_rows);
 	for (auto i : a_indices) {
+		if (norm(Ws.col(i)) > 1) Ws.col(i) = normalise(Ws.col(i));
 		g_a += Ws.col(i);
 	}
 	return dot(g_a, f_q);
@@ -50,9 +50,8 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 	}
 	vec f_q = zeros<vec>(Ww.n_rows);
 	for (auto i : question_indices){
-		vec t = Ww.col(i);
-		if (norm(t) > 1) t = normalise(t);
-		f_q += t;
+		if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
+		f_q += Ww.col(i);
 	}
 	for (auto &item1 : graph[q_entity]){
 		
@@ -66,11 +65,11 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 				answer_vec.push_back(index_of_kb[rel2]);
 				double score = scoreFunc(f_q, answer_vec, Ws);
 				if (pq.empty() < 10){
-					pq.push(make_tuple(score, rel1, rel2));
+					pq.push(std::move(make_tuple(score, rel1, rel2)));
 				}
 				else if (get<0>(pq.top()) < score){
 					pq.pop();
-					pq.push(make_tuple(score, rel1, rel2));
+					pq.push(std::move(make_tuple(score, rel1, rel2)));
 				}
 			}
 		}
@@ -102,7 +101,7 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 				}
 				copy(subgraph_set.begin(), subgraph_set.end(), back_inserter(answer_vec));
 				auto score = scoreFunc(f_q, answer_vec, Ws);
-				answers.push_back(make_pair(score, AnswerInfo{ answer_node, q_entity, 2}));
+				answers.push_back(std::move(make_pair(score, std::move(AnswerInfo{ answer_node, q_entity, 2}))));
 			}
 		}
 	}
@@ -117,6 +116,7 @@ void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& qu
 	
 	vec f_q = zeros<vec>(Ww.n_rows);
 	for (auto i : question_indices){
+		if (norm(Ww.col(i)) > 1) Ww.col(i) = normalise(Ww.col(i));
 		f_q += Ww.col(i);
 	}
 	
@@ -143,7 +143,7 @@ void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& qu
 			}
 			copy(subgraph_set.begin(), subgraph_set.end(), back_inserter(answer_vec));
 			auto score = scoreFunc(f_q, answer_vec, Ws);
-			answers.push_back(make_pair(score * 1.5, std::move(AnswerInfo{ candidate, q_entity, 1 })));
+			answers.push_back(std::move(make_pair(score * 1.5, std::move(AnswerInfo{ candidate, q_entity, 1 }))));
 			
 		}
 	}
@@ -181,6 +181,7 @@ void inference_on(Blob &blob,
 		strategy_c1(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
 		//beam_search_c2(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
 	}
+
 	sort(answers.begin(), answers.end(), [](const pair<double, AnswerInfo> &lhs, const pair<double, AnswerInfo>&rhs){return lhs.first > rhs.first; });
 
 	std::ostringstream os;
@@ -188,11 +189,12 @@ void inference_on(Blob &blob,
 	auto highest_score = answers[0].first;
 
 	double threshold = 0.1;
+	cout << answers.size() << endl;
 	for (auto &a : answers){
 		AnswerInfo &info = a.second;
 		// The candidates whose scores are not far from the best answer are regarded as predicated results.
 		// The threshould is set to be same with the margin defined at training stage.
-		//if (highest_score - threshold > a.first) break;
+		if (highest_score - threshold > a.first) break;
 		if (appeared.count(a.second.answer) == 0){
 			os << info.answer << ":" << a.first << ":" << info.topic_entity << ":" << info.n_hop << " "; 
 			appeared.insert(info.answer);
@@ -201,9 +203,11 @@ void inference_on(Blob &blob,
 	string answer_str = os.str(); // Extra space at last need to be removed
 	if (answer_str.back() == ' ')
 		answer_str.pop_back();
-	static std::atomic<int> lno(0);
-	//lock_guard<std::mutex> g(mutex_);
-	os.clear();
+	//static std::atomic<int> lno(0);
+	// Ignore the thread collision
+	static int lno = 0;
+	os.str("");
+	//os.clear();
 	os << blob.question << "\t" << blob.gold_answers_str << "\t" << answer_str << "\t" << blob.original_size_of_gold;
 	blob.predicated = os.str();
 	//fprintf(fout, "%s\t%s\t%s\t%s\n", blob.question.c_str(), blob.gold_answers_str.c_str(), answer_str.c_str(), blob.original_size_of_gold.c_str());
@@ -280,7 +284,6 @@ void inference(const string&fb_path, const string& word_list_path, const string&
 		test_data.push_back(std::move(blob));
 	}
 	
-	std::mutex m;		// Thread lock
 	// Create 15 threads, and assign the work
 	int n_workers = 16;
 	vector<thread> threads(n_workers - 1);

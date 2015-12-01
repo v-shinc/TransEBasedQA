@@ -62,11 +62,11 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 				answer_vec.push_back(index_of_kb[rel2]);
 				double score = scoreFunc(f_q, answer_vec, Ws);
 				if (pq.empty() < 10){
-					pq.push(make_tuple(score, rel1, rel2));
+					pq.push(std::move(make_tuple(score, rel1, rel2)));
 				}
 				else if (get<0>(pq.top()) < score){
 					pq.pop();
-					pq.push(make_tuple(score, rel1, rel2));
+					pq.push(std::move(make_tuple(score, rel1, rel2)));
 				}
 			}
 		}
@@ -96,9 +96,10 @@ void beam_search_c2(graph_type& graph, const string &q_entity, vector<unsigned>&
 							subgraph_set.insert(start_index + index_of_kb[o]);
 					}
 				}
+				//cout << "Element number of subgraph = " << subgraph_set.size() << endl;
 				copy(subgraph_set.begin(), subgraph_set.end(), back_inserter(answer_vec));
 				auto score = scoreFunc(f_q, answer_vec, Ws);
-				answers.push_back(make_pair(score, AnswerInfo{ answer_node, q_entity, 2}));
+				answers.push_back(std::move(make_pair(score, std::move(AnswerInfo{ answer_node, q_entity, 2}))));
 			}
 		}
 	}
@@ -114,7 +115,8 @@ void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& qu
 	for (auto i : question_indices){
 		f_q += Ww.col(i);
 	}
-	
+	static uniform_real_distribution<double> distribution(0.0, 1.0);
+	static default_random_engine generator;
 	unsigned start_index = index_of_kb.size();
 	for (auto &item1 : graph[q_entity]){
 		for (auto &candidate : item1.second){
@@ -123,8 +125,6 @@ void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& qu
 			answer_vec.push_back(index_of_kb[item1.first]);  // add relation in path
 			answer_vec.push_back(index_of_kb[candidate]);
 
-			static uniform_real_distribution<double> distribution(0.0, 1.0);
-			static default_random_engine generator;
 			double prob = min(1.0, 100.0 / graph[candidate].size());
 			unordered_set<unsigned> subgraph_set;
 			// add subgraph
@@ -136,9 +136,10 @@ void strategy_c1(graph_type& graph, const string &q_entity, vector<unsigned>& qu
 					}
 				}
 			}
+			//cout << "Element number of subgraph = " << subgraph_set.size() << endl;
 			copy(subgraph_set.begin(), subgraph_set.end(), back_inserter(answer_vec));
 			auto score = scoreFunc(f_q, answer_vec, Ws);
-			answers.push_back(make_pair(score * 1.5, std::move(AnswerInfo{ candidate, q_entity, 1 })));
+			answers.push_back(std::move(make_pair(score * 1.5, std::move(AnswerInfo{ candidate, q_entity, 1 }))));
 			
 		}
 	}
@@ -174,7 +175,7 @@ void inference_on(Blob &blob,
 	// Go over all candidate question topic entities
 	for (auto &topic_e : blob.topic_entities){
 		strategy_c1(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
-		beam_search_c2(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
+		//beam_search_c2(graph, topic_e, question_indices, index_of_kb, Ws, Ww, answers);
 	}
 	sort(answers.begin(), answers.end(), [](const pair<double, AnswerInfo> &lhs, const pair<double, AnswerInfo>&rhs){return lhs.first > rhs.first; });
 
@@ -196,8 +197,11 @@ void inference_on(Blob &blob,
 	string answer_str = os.str(); // Extra space at last need to be removed
 	if (answer_str.back() == ' ')
 		answer_str.pop_back();
-	static std::atomic<int> lno(0);
-	os.clear();
+	//static std::atomic<int> lno(0);
+	//Ignore thread collision
+	static int lno = 0;
+	os.str("");
+	//os.clear();
 	os << blob.question << "\t" << blob.gold_answers_str << "\t" << answer_str << "\t" << blob.original_size_of_gold;
 	blob.predicated = os.str();
 	lno++;
@@ -249,7 +253,7 @@ void inference(const string&fb_path, const string& word_list_path, const string&
 	char out_path[] = "data/inference.result";
 	FILE *fout = fopen(out_path, "w");
 	fstream fs(test_data_path);
-	cout << "Start to inference\n";
+	
 	
 	/* the input format is 
 		(question (word-version), candidate topic entities list , gold answer set, original size of gold answer set), columns are separated by tab, 
@@ -265,14 +269,15 @@ void inference(const string&fb_path, const string& word_list_path, const string&
 			strs[0],
 			vector<string>(),
 			strs[2],
-			strs[3]
+			strs[3],
+			""
 		};
 		vector<string> topic_entities;
 		boost::split(blob.topic_entities, strs[1], boost::is_any_of(" "));
 		test_data.push_back(std::move(blob));
 	}
-	
-	// Create 15 threads, and assign the work
+	cout << "Start to inference\n";
+	// Create threads and assign the work
 	int n_workers = 16;
 	vector<thread> threads(n_workers - 1);
 	unsigned long block_size = test_data.size() / n_workers;
